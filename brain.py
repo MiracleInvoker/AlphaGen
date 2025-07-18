@@ -69,7 +69,6 @@ class Alpha:
     def simulate(brain_session, simulation_data):
 
         simulation_response = brain_session.post(API.simul, json = simulation_data)
-        simulation_response.raise_for_status()
         simulation_progress_url = simulation_response.headers["Location"]
 
         trial = 0
@@ -77,12 +76,7 @@ class Alpha:
             simulation_progress = brain_session.get(simulation_progress_url)
             trial += 1
 
-            try:
-                simulation_response = simulation_progress.json()
-            except requests.exceptions.JSONDecodeError:
-                terminal.clear_line()
-                console.print(f"Attempt #{trial} | JSONDecodeError", end = "", style = 'red')
-                continue
+            simulation_response = simulation_progress.json()
 
             if ("alpha" in simulation_response):
                 break
@@ -106,24 +100,33 @@ class Alpha:
         
         while True:
             simulation_result = brain_session.get(API.alpha + alpha_id)
+
             if simulation_result.text:
                 break
+
+            sleep(float(simulation_result.headers["Retry-After"]))
 
         result_json = simulation_result.json()
         return result_json
     
     def pnl(brain_session, alpha_id):
 
+        trial = 0
         while True:
             pnl = brain_session.get(API.pnl(alpha_id))
+            trial += 1
 
-            if pnl.headers.get("Retry-After", 0) == 0:
+            if (pnl.text):
                 break
+
+            terminal.clear_line()
+            console.print(f"Attempt #{trial} | Retrieving PnL Chart...", end = "", style = "yellow")
 
             sleep(float(pnl.headers["Retry-After"]))
 
-        console.print("PnL Chart Retrieved.", style = 'yellow')
+        terminal.clear_line()
+        console.print(f"Attempt #{trial} | PnL Chart Retrieved.", style = "yellow")
+
         pnl_json = pnl.json()
         pnl_data = pnl_json["records"]
-
         return pnl_data

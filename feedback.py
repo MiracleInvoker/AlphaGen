@@ -1,5 +1,6 @@
 import brain
 import config
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 import json
@@ -7,7 +8,6 @@ import os
 import pickle
 import processing
 from rich.console import Console
-from time import sleep
 
 
 with open(config.system_prompt_file, 'r') as f:
@@ -20,11 +20,19 @@ with open(config.simulations_file, 'w+') as f:
 with open(config.context_file, 'wb') as f:
     pickle.dump([], f)
 
+if (config.operators):
+    with open("operators.txt", "r") as f:
+        operators = f.read()
+        operators = operators.strip()
 
-brain_session = brain.login()
+    system_prompt = system_prompt.replace("{Operators}", operators)
+    system_prompt = system_prompt.strip()
+
+load_dotenv()
 console = Console()
+brain_session = brain.login()
 genai_client = genai.Client(
-    api_key = os.getenv('GEMINI_API_KEY')
+    api_key = os.getenv('gemini_api_keys').split(',')[1]
 )
 
 context = []
@@ -67,15 +75,11 @@ class Model:
         return resp.total_tokens
 
     def get_output(context):
-        try:
-            response = genai_client.models.generate_content(
-                model = config.model,
-                contents = context,
-                config = model_config
-            )
-        except genai.errors.ServerError as e:
-            console.print(e, style = 'red')
-            exit(1)
+        response = genai_client.models.generate_content(
+            model = config.model,
+            contents = context,
+            config = model_config
+        )
 
         resp = response.text
         return json.loads(resp)
@@ -131,7 +135,7 @@ Turnover: {round(100 * train['turnover'], 2)}%
         }
 
         return payload
-    
+
     def save_iteration(context, alpha):
 
         with open(config.simulations_file, 'r+') as f:
@@ -189,6 +193,11 @@ for i in range(config.max_iterations):
 
 
     user_context = User.get_context(simulation_results, score)
+
+    # with open('pnl_chart.png','rb') as f:
+    #     image_bytes = f.read()
+
+    # pnl_chart = types.Part.from_bytes(data = image_bytes, mime_type = "image/png")
 
     context.append(
         types.Content(
