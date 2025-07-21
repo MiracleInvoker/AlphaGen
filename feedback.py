@@ -3,11 +3,14 @@ import config
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from httpx import ReadError, ConnectTimeout, ConnectError
 import json
 import os
 import pickle
 import processing
+from requests import exceptions
 from rich.console import Console
+from time import sleep
 
 
 with open(config.system_prompt_file, 'r') as f:
@@ -99,26 +102,30 @@ Reasoning:
 
 class User:
     def get_context(simulation_result, score):
-        # insample = simulation_result['is']
+        insample = simulation_result['is']
         train = simulation_result['train']
-        # checks = insample['checks']
+        checks = insample['checks']
+
+        is_sub_universe_sharpe = [check['value'] for check in checks if check['name'] == 'LOW_SUB_UNIVERSE_SHARPE'][0]
+        is_sub_universe_sharpe_limit = [check['limit'] for check in checks if check['name'] == 'LOW_SUB_UNIVERSE_SHARPE'][0]
 
         user_context = f"""
 Simulation Results:
-Score: {score}
-Sharpe: {train['sharpe']}
-Fitness: {train['fitness']}
-Turnover: {round(100 * train['turnover'], 2)}%
+Test Period Score: {score}
+Train Period Sharpe: {train['sharpe']}
+Train Period Fitness: {train['fitness']}
+Train Period Turnover: {round(100 * train['turnover'], 2)}%
+Sub Universe Robustness: {round(is_sub_universe_sharpe / min(0.1, is_sub_universe_sharpe_limit), 2)}
 """
 
-        # if (checks[4]['result'] == 'FAIL'):
-        #     if (checks[4].get('value')):
-        #         user_context += f'Weight concentration {round(checks[4]['value'] * 100, 2)}% is above cutoff of {round(checks[4]['limit'] * 100, 2)}% on {checks[4]['date']}.\n'
-        #     else:
-        #         user_context += 'Weight is too strongly concentrated or too few instruments are assigned weight.\n'
+        if (checks[4]['result'] == 'FAIL'):
+            if (checks[4].get('value')):
+                user_context += f'Weight Concentration {round(checks[4]['value'] * 100, 2)}% is above cutoff of {round(checks[4]['limit'] * 100, 2)}%.\n'
+            else:
+                user_context += 'Weight is too strongly concentrated or too few instruments are assigned weight.\n'
 
         # if (checks[5]['result'] == 'FAIL'):
-        #     user_context += f'Sub Universe Sharpe {checks[5]['value']} is not above {checks[5]['limit']}.\n'
+            # user_context += f'In Sample Sub Universe Sharpe {checks[5]['value']} is not above {checks[5]['limit']}.\n'
 
         # if (checks[6]['result'] == 'UNITS'):
         #     user_context += checks[6]['message'].replace('; ', '\n')
@@ -168,7 +175,13 @@ console.print(f'{config.initial_prompt}', style = 'green')
 
 for i in range(config.max_iterations):
 
-    model_output = Model.get_output(context)
+    while True:
+        try:
+            model_output = Model.get_output(context)
+            break
+        except (ReadError, genai.errors.ServerError, ConnectTimeout, ConnectError) as e:
+            console.print(f"Model.get_output: {e}", style = "red")
+            sleep(10)
 
     model_context = Model.get_context(i, model_output)
     simulation_data = User.process_output(model_output)
@@ -183,7 +196,13 @@ for i in range(config.max_iterations):
     )
     console.print(model_context, style = 'cyan')
 
-    alpha_id = brain.Alpha.simulate(brain_session, simulation_data)
+    while True:
+        try:
+            alpha_id = brain.Alpha.simulate(brain_session, simulation_data)
+            break
+        except (exceptions.ConnectionError, exceptions.JSONDecodeError) as e:
+            console.print(f"brain.Alpha.simulate: {e}", style = "red")
+            sleep(10)
 
     pnl_data = brain.Alpha.pnl(brain_session, alpha_id)
     processing.pnl_chart(pnl_data)
