@@ -5,54 +5,57 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 
 
-def score(simulation_result):
-    insample = simulation_result['is']
+def alpha_quality_factor(simulation_result):
     train = simulation_result['train']
     test = simulation_result['test']
+
+    test_sharpe = test['sharpe']
+    test_fitness = test['fitness']
+
+    train_sharpe = train['sharpe']
+    train_fitness = train['fitness']
+
+    if (train_sharpe <= 0 or train_fitness <= 0):
+        return 0
+
+    else:
+        sign = abs(test_sharpe) / test_sharpe
+        
+        sharpe_stability = test_sharpe / train_sharpe
+        fitness_stability = test_fitness / train_fitness
+
+        if (sharpe_stability < 1 or fitness_stability < 1):
+            return round(sign * (min(1, sharpe_stability) * min(1, fitness_stability)) ** (1 / 2), 2)
+
+        return round(sign * ((sharpe_stability * fitness_stability) ** (1 / 2)), 2)
+            
+
+def turnover_stability(simulation_result):
+    train = simulation_result['train']
+    test = simulation_result['test']
+
+    test_turnover = test['turnover']
+    train_turnover = train['turnover']
+
+    turnover_stability = min(test_turnover, train_turnover) / max(test_turnover, train_turnover)
+
+    return turnover_stability
+
+
+def sub_universe_robustness(simulation_result):
+    insample = simulation_result['is']
     checks = insample['checks']
 
     is_sub_universe_sharpe = [check['value'] for check in checks if check['name'] == 'LOW_SUB_UNIVERSE_SHARPE']
 
-    is_pnl = insample['pnl']
-    is_sharpe = insample['sharpe']
-    is_turnover = insample['turnover']
-    is_returns = insample['returns']
-    is_drawdown = insample['drawdown']
-    is_fitness = insample['fitness']
-    is_margin = insample['margin']
-
     if (is_sub_universe_sharpe == []):
-        is_sub_universe_sharpe = is_sharpe
+        return None
     else:
         is_sub_universe_sharpe = is_sub_universe_sharpe[0]
+    
+    is_sub_universe_sharpe_limit = [check['limit'] for check in checks if check['name'] == 'LOW_SUB_UNIVERSE_SHARPE'][0]
 
-    test_pnl = test['pnl']
-    test_sharpe = test['sharpe']
-    test_turnover = test['turnover']
-    test_returns = test['returns']
-    test_drawdown = test['drawdown']
-    test_fitness = test['fitness']
-    test_margin = test['margin']
-
-    train_pnl = train['pnl']
-    train_sharpe = train['sharpe']
-    train_turnover = train['turnover']
-    train_returns = train['returns']
-    train_drawdown = train['drawdown']
-    train_fitness = train['fitness']
-    train_margin = train['margin']
-
-    if (test_sharpe < 0 or train_sharpe < 0 or is_sharpe < 0 or is_sub_universe_sharpe < 0):
-        return 0
-
-    core_performance = test_fitness
-    stability_multiplier = min(1, test_sharpe / train_sharpe)
-    robustness_multiplier = is_sub_universe_sharpe / is_sharpe
-    drawdown_penalty = (1 - test_drawdown)
-
-    score = core_performance * stability_multiplier * robustness_multiplier * drawdown_penalty
-
-    return round(score, 2)
+    return round(0.75 * is_sub_universe_sharpe / is_sub_universe_sharpe_limit, 2)
 
 
 def pnl_chart(pnl_data):
@@ -103,14 +106,14 @@ def pnl_chart(pnl_data):
 
     if highlight_start > 0:
         ax.plot(range(highlight_start), values[:highlight_start],
-                linewidth=0.7, linestyle='-', color=config.Graph.train_color)
+                linewidth=0.7, linestyle='-', color=config.pnl_chart['train_color'])
 
     ax.plot(range(highlight_start, n_points), values[highlight_start:],
-            linewidth=0.7, linestyle='-', color=config.Graph.test_color)
+            linewidth=0.7, linestyle='-', color=config.pnl_chart['test_color'])
 
     x0, x1 = steep_idx, steep_idx + 1
     y0, y1 = values[x0], values[x1]
-    ax.plot([x0, x1], [y0, y1], linewidth=0.7, linestyle='-', color=config.Graph.drawdown_color)
+    ax.plot([x0, x1], [y0, y1], linewidth=0.7, linestyle='-', color=config.pnl_chart['drawdown_color'])
 
     ax.set_xticks(positions)
     ax.set_xticklabels(labels, rotation=0, ha='right', color='#7b8292', fontsize=8)

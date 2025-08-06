@@ -3,42 +3,42 @@ import config
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from httpx import ReadError, ConnectTimeout, ConnectError
 import json
 import os
 import pickle
 import processing
-from requests import exceptions
 from rich.console import Console
-from time import sleep
+from time import sleep, strftime
 
-
-with open(config.system_prompt_file, 'r') as f:
-    system_prompt = f.read()
-    system_prompt = system_prompt.strip()
-
-with open(config.simulations_file, 'w+') as f:
-    json.dump([], f, indent = 2)
-
-with open(config.context_file, 'wb') as f:
-    pickle.dump([], f)
-
-if (config.operators):
-    with open("operators.txt", "r") as f:
-        operators = f.read()
-        operators = operators.strip()
-
-    system_prompt = system_prompt.replace("{Operators}", operators)
-    system_prompt = system_prompt.strip()
 
 load_dotenv()
 console = Console()
+gemini_api_keys = os.getenv('gemini_api_keys').split(',')
+output_file = strftime('%d%m%Y-%H%M%S')
+simulations_file = f"simulations/{output_file}.json"
+contexts_file = f"contexts/{output_file}.json"
+context = []
+
 brain_session = brain.login()
 genai_client = genai.Client(
-    api_key = os.getenv('gemini_api_keys').split(',')[1]
+    api_key = gemini_api_keys[0]
 )
 
-context = []
+with open(config.system_prompt_file, 'r') as f:
+    system_prompt = f.read()
+
+with open(config.operators_file, 'r') as f:
+    operators = f.read()
+    operators = operators.strip()
+
+system_prompt = system_prompt.replace("{Operators}", operators)
+system_prompt = system_prompt.strip()
+
+with open(simulations_file, 'w+') as f:
+    json.dump([], f, indent = 2)
+
+with open(contexts_file, 'wb') as f:
+    pickle.dump(context, f)
 
 
 model_config = types.GenerateContentConfig(
@@ -49,17 +49,14 @@ model_config = types.GenerateContentConfig(
     response_mime_type = 'application/json',
     response_schema = types.Schema(
         type = types.Type.OBJECT,
-        description = config.schema_description,
-        required = list(config.schema.keys()),
+        description = config.structured_output_schema_description,
+        required = list(config.structured_output_schema.keys()),
         properties = {
-            'Alpha Expression': types.Schema(
+            key: types.Schema(
                 type = types.Type.STRING,
-                description = config.schema['Alpha Expression'],
-            ),
-            'Reasoning': types.Schema(
-                type = types.Type.STRING,
-                description = config.schema['Reasoning']
+                description = desc
             )
+            for key, desc in config.structured_output_schema.items()
         },
     ),
     system_instruction = [
@@ -86,53 +83,101 @@ class Model:
 
         resp = response.text
         return json.loads(resp)
-    
+
     def get_context(i, model_output):
 
-        model_context = f"""
-Iteration #{i + 1}
-Alpha Expression:
-{model_output['Alpha Expression']}
+        lines = [f"Iteration #{i + 1}"]
 
-Reasoning:
-{model_output['Reasoning']}
-"""
-        return model_context.strip()
+        for field in config.structured_output_schema:
+            lines.append(f"{field}:")
+            lines.append(model_output.get(field))
+
+        model_context = "\n".join(lines)
+
+        return model_context
 
 
 class User:
-    def get_context(simulation_result, score):
+    def get_context(simulation_result):
         insample = simulation_result['is']
         train = simulation_result['train']
         checks = insample['checks']
 
-        is_sub_universe_sharpe = [check['value'] for check in checks if check['name'] == 'LOW_SUB_UNIVERSE_SHARPE'][0]
-        is_sub_universe_sharpe_limit = [check['limit'] for check in checks if check['name'] == 'LOW_SUB_UNIVERSE_SHARPE'][0]
+        train_sharpe = train['sharpe']
+        train_fitness = train['fitness']
+        train_turnover = round(100 * train['turnover'], 2)
+        sub_universe_robustness = processing.sub_universe_robustness(simulation_result)
+        alpha_quality_factor = round(processing.alpha_quality_factor(simulation_result), 2)
+        romad = round(insample['returns'] / insample['drawdown'], 2)
+        turnover_stability = round(processing.turnover_stability(simulation_result), 2)
 
-        user_context = f"""
-Simulation Results:
-Test Period Score: {score}
-Train Period Sharpe: {train['sharpe']}
-Train Period Fitness: {train['fitness']}
-Train Period Turnover: {round(100 * train['turnover'], 2)}%
-Sub Universe Robustness: {round(is_sub_universe_sharpe / min(0.1, is_sub_universe_sharpe_limit), 2)}
-"""
+        for check in checks:
+            name = check['name']
 
-        if (checks[4]['result'] == 'FAIL'):
-            if (checks[4].get('value')):
-                user_context += f'Weight Concentration {round(checks[4]['value'] * 100, 2)}% is above cutoff of {round(checks[4]['limit'] * 100, 2)}%.\n'
+            if (name == 'LOW_SHARPE'):
+                sharpe_limit = check['limit']
+            elif (name == 'LOW_FITNESS'):
+                fitness_limit = check['limit']
+            elif (name == 'LOW_TURNOVER'):
+                turnover_lower_limit = check['limit']
+            elif (name == 'HIGH_TURNOVER'):
+                turnover_upper_limit = check['limit']
+            elif (name == 'CONCENTRATED_WEIGHT'):
+                weight_concentration = check
+
+        user_contexts = [
+                        "Simulation Results",
+                        f"Train Period Sharpe: {train_sharpe}",
+                        f"Train Period Fitness: {train_fitness}",
+                        f"Train Period Turnover: {train_turnover}%",
+                        f"Sub Universe Robustness: {sub_universe_robustness}",
+                        f"Alpha Quality Factor: {alpha_quality_factor}",
+                        f"RoMaD: {romad}",
+                        f"Turnover Stability: {turnover_stability}"
+                    ]
+
+        if (train_sharpe < sharpe_limit):
+            user_contexts[1] += f" is less than {sharpe_limit}"
+        if (train_fitness < fitness_limit):
+            user_contexts[2] += f" is less than {fitness_limit}"
+        if (train['turnover'] < turnover_lower_limit):
+            user_contexts[3] += f" is less than {round(100 * turnover_lower_limit, 2)}"
+        if (train['turnover'] > turnover_upper_limit):
+            user_contexts[3] += f" is more than {round(100 * turnover_upper_limit, 2)}"
+        if (sub_universe_robustness is not None and sub_universe_robustness < 0.75):
+            user_contexts[4] += f" is less than 0.75"
+        if (alpha_quality_factor < 1):
+            user_contexts[5] += f" is less than 1"
+        if (romad < 2):
+            user_contexts[6] += f" is less than 2"
+        if (turnover_stability < 0.85):
+            user_contexts[7] += f" is less than 0.85"
+
+
+#         user_context = f"""
+# Simulation Results:
+# Train Period Sharpe: {train['sharpe']}
+# Train Period Fitness: {train['fitness']}
+# Train Period Turnover: {round(100 * train['turnover'], 2)}%
+# Sub Universe Robustness: {processing.sub_universe_robustness(simulation_result)}
+# Alpha Quality Factor: {round(processing.alpha_quality_factor(simulation_result), 2)}
+# RoMaD: {round(insample['returns'] / insample['drawdown'], 2)}
+# Turnover Stability: {round(processing.turnover_stability(simulation_result), 2)}
+# """
+
+        user_context = '\n'.join(user_contexts)
+
+        if (weight_concentration['result'] == 'FAIL'):
+            if weight_concentration.get('value'):
+                user_context += f"\nWeight Concentration {round(weight_concentration['value'] * 100, 2)}% is above cutoff of {round(weight_concentration['limit'] * 100, 2)}%."
             else:
-                user_context += 'Weight is too strongly concentrated or too few instruments are assigned weight.\n'
-
-        # if (checks[5]['result'] == 'FAIL'):
-            # user_context += f'In Sample Sub Universe Sharpe {checks[5]['value']} is not above {checks[5]['limit']}.\n'
-
-        # if (checks[6]['result'] == 'UNITS'):
-        #     user_context += checks[6]['message'].replace('; ', '\n')
-        #     user_context += '\n'
+                user_context += "\nWeight is too strongly concentrated or too few instruments are assigned weight."
+        
+        if (train_sharpe < -0.625 or train_fitness < -0.5):
+            user_context += f"\nThe Hypothesis Direction is Reversed, Please Correct It."
 
         return user_context.strip()
-    
+
     def process_output(model_output):
 
         payload = {
@@ -145,43 +190,54 @@ Sub Universe Robustness: {round(is_sub_universe_sharpe / min(0.1, is_sub_univers
 
     def save_iteration(context, alpha):
 
-        with open(config.simulations_file, 'r+') as f:
+        with open(simulations_file, 'r+') as f:
             data = json.load(f)
             data.append(alpha)
             f.seek(0)
             json.dump(data, f, indent = 2)
 
-        with open(config.context_file, 'wb') as f:
+        with open(contexts_file, 'wb') as f:
             pickle.dump(context, f)
 
+
+initial_prompt = config.initial_prompt
+initial_prompt += "\n\nData Field Context:\n```\n"
+
+for data_field in config.data_fields:
+    data_field_desc = brain.data_field(brain_session, data_field)
+    initial_prompt += f"{data_field}: {data_field_desc}\n"
+
+initial_prompt += "```"
 
 context.append(
     types.Content(
         role = 'user',
         parts = [
-            types.Part.from_text(text = config.initial_prompt)
+            types.Part.from_text(text = initial_prompt)
         ]
     )
 )
 
 
-console.print(f'Model: {config.model}', style = 'purple')
-console.print(f'Temperature: {config.temperature}', style = 'purple')
-console.print(f'System Prompt File: {config.system_prompt_file}', style = 'purple')
+console.print(f"Model: {config.model}", style = 'purple')
+console.print(f"Temperature: {config.temperature}", style = 'purple')
+console.print(f"System Prompt File: {config.system_prompt_file}", style = 'purple')
 
 
-console.print(f'{config.initial_prompt}', style = 'green')
+console.print(initial_prompt, style = 'green')
 
 
 for i in range(config.max_iterations):
 
     while True:
+
         try:
             model_output = Model.get_output(context)
             break
-        except (ReadError, genai.errors.ServerError, ConnectTimeout, ConnectError) as e:
-            console.print(f"Model.get_output: {e}", style = "red")
-            sleep(10)
+
+        except Exception as e:
+            console.print(f"Model.get_output: {e}", style = 'red')
+            sleep(5)
 
     model_context = Model.get_context(i, model_output)
     simulation_data = User.process_output(model_output)
@@ -200,23 +256,16 @@ for i in range(config.max_iterations):
         try:
             alpha_id = brain.Alpha.simulate(brain_session, simulation_data)
             break
-        except (exceptions.ConnectionError, exceptions.JSONDecodeError) as e:
-            console.print(f"brain.Alpha.simulate: {e}", style = "red")
-            sleep(10)
+        except Exception as e:
+            console.print(f"brain.Alpha.simulate: {e}", style = 'red')
+            sleep(5)
 
     pnl_data = brain.Alpha.pnl(brain_session, alpha_id)
     processing.pnl_chart(pnl_data)
 
-    simulation_results = brain.Alpha.simulation_result(brain_session, alpha_id)
-    score = processing.score(simulation_results)
+    simulation_result = brain.Alpha.simulation_result(brain_session, alpha_id)
 
-
-    user_context = User.get_context(simulation_results, score)
-
-    # with open('pnl_chart.png','rb') as f:
-    #     image_bytes = f.read()
-
-    # pnl_chart = types.Part.from_bytes(data = image_bytes, mime_type = "image/png")
+    user_context = User.get_context(simulation_result)
 
     context.append(
         types.Content(
@@ -228,9 +277,13 @@ for i in range(config.max_iterations):
     )
     console.print(user_context, style = 'green')
 
-    User.save_iteration(context, simulation_results)
+    User.save_iteration(context, simulation_result)
 
-    token_count = Model.count_tokens(context)
-    console.print(f'Token Count: {token_count}', style = 'purple')
+    try:
+        token_count = Model.count_tokens(context)
+        console.print(f"Token Count: {token_count}", style = 'purple')
+
+    except Exception as e:
+        console.print(f"Model.count_tokens: {e}", style = 'red')
 
     print()

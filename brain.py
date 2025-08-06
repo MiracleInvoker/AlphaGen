@@ -1,5 +1,6 @@
 from datetime import timedelta
 from dotenv import load_dotenv, set_key
+import json
 from os import getenv
 import requests
 from rich.console import Console
@@ -13,6 +14,8 @@ class API:
     auth = base + "/authentication"
     simul = base + "/simulations"
     alpha = base + "/alphas/"
+    alphas = base + "/users/self/alphas"
+    data_field = base + "/data-fields/"
 
     def pnl(alpha_id):
         return API.alpha + alpha_id + "/recordsets/pnl"
@@ -87,7 +90,7 @@ class Alpha:
             progress = simulation_response["progress"]
 
             terminal.clear_line()
-            console.print(f"Attempt #{trial} | Simulation Progress: {int(100 * progress)}%", end = "", style = 'yellow')
+            console.print(f"Attempt #{trial} | Simulation Progress: {int(100 * progress)}%", end = '', style = 'yellow')
             sleep(float(simulation_progress.headers["Retry-After"]))
 
         alpha_id = simulation_response["alpha"]
@@ -120,13 +123,55 @@ class Alpha:
                 break
 
             terminal.clear_line()
-            console.print(f"Attempt #{trial} | Retrieving PnL Chart...", end = "", style = "yellow")
+            console.print(f"Attempt #{trial} | Retrieving PnL Chart...", end = '', style = 'yellow')
 
             sleep(float(pnl.headers["Retry-After"]))
 
         terminal.clear_line()
-        console.print(f"Attempt #{trial} | PnL Chart Retrieved.", style = "yellow")
+        console.print(f"Attempt #{trial} | PnL Chart Retrieved.", style = 'yellow')
 
         pnl_json = pnl.json()
         pnl_data = pnl_json["records"]
         return pnl_data
+
+
+def extract_alphas(brain_session, submitted = True):
+    alphas = []
+
+    payload = {
+        'limit': 100,
+        'offset': 0,
+        'order': '-dateCreated',
+        'hidden': 'false'
+    }
+
+    if (submitted):
+        payload['status!'] = 'UNSUBMITTED'
+        file_name = "submitted_alphas.json"
+    else:
+        payload['status'] = 'UNSUBMITTED'
+        file_name = "unsubmitted_alphas.json"
+
+    while (True):
+        resp = brain_session.get(API.alphas, params = payload)
+        resp_json = resp.json()
+
+        alphas += resp_json['results']
+        console.print(f"{len(alphas)} Alphas Extracted...", style = 'yellow')
+
+        if (resp_json['next'] == None):
+            break
+        else:
+            payload['offset'] += 100
+
+    console.print(f"Total Alphas Extracted: {len(alphas)}", style = 'green')
+
+    with open(file_name, 'w') as f:
+        json.dump(alphas, f, indent = 2)
+
+
+def data_field(brain_session, data_field):
+    resp = brain_session.get(API.data_field + data_field)
+    resp_json = resp.json()
+
+    return resp_json['description']
