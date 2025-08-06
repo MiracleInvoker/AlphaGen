@@ -1,4 +1,3 @@
----
 # AlphaGen: Feedback-Driven Alpha Generation
 
 > "Automate the Routine, Preserve the Creative." - Igor Tulchinsky (CEO of WorldQuant)
