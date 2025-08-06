@@ -141,9 +141,9 @@ class User:
         if (train_fitness < fitness_limit):
             user_contexts[2] += f" is less than {fitness_limit}"
         if (train['turnover'] < turnover_lower_limit):
-            user_contexts[3] += f" is less than {round(100 * turnover_lower_limit, 2)}"
+            user_contexts[3] += f" is less than {round(100 * turnover_lower_limit, 2)}%"
         if (train['turnover'] > turnover_upper_limit):
-            user_contexts[3] += f" is more than {round(100 * turnover_upper_limit, 2)}"
+            user_contexts[3] += f" is more than {round(100 * turnover_upper_limit, 2)}%"
         if (sub_universe_robustness is not None and sub_universe_robustness < 0.75):
             user_contexts[4] += f" is less than 0.75"
         if (alpha_quality_factor < 1):
