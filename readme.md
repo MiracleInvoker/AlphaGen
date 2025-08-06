@@ -164,4 +164,4 @@ Contributions are welcome! If you have ideas for new features, improvements, or 
 
 ## 📜 License
 
-This project is licensed under the Apace License 2.0. See the `LICENSE` file for details.
+This project is licensed under the Apache License 2.0. See the `LICENSE` file for details.
