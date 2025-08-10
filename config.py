@@ -36,10 +36,10 @@ max_iterations = 100
 
 structured_output_schema_description = 'Schema for Structured Output of Alpha Expression.'
 structured_output_schema = {
-    'Alpha Expression': 'Alphas are Mathematical models that seek to predict the future price movement of various financial instruments.',
-    'Hypothesis': 'Explain the Rationale behind the Idea - both from a Quantitative and Economic Perspective.',
-    'Implementation': 'Explain the Use of the Data Fields and Operators.',
-    'Iteration Changes': 'If it is an Iteration, highlight ALL the Changes and Explain why they were introduced in light of Simulation Results.'
+    'Alpha Expression': 'Write the Alpha Expression - a mathematical formula that MUST include descriptive variables and multi-line expressions. In a multi-line expression, every line must end with a semicolon (;).',
+    'Hypothesis': 'Explain the Rationale behind the Idea - both from a Quantitative and Economic Perspective. Address both the quantitative justification and the economic intuition clearly.',
+    'Implementation': 'Explain the use of the data fields and operators in the expression.',
+    'Iteration Changes': 'If this is an iteration, list ALL changes explicitly and explain why each was introduced, referring to the simulation results that motivated the change.'
 }
 
 

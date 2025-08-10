@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 
 
-def alpha_quality_factor(simulation_result):
+def alpha_quality_factor(simulation_result, sharpe_limit, fitness_limit):
     train = simulation_result['train']
     test = simulation_result['test']
 
@@ -15,10 +15,13 @@ def alpha_quality_factor(simulation_result):
     train_sharpe = train['sharpe']
     train_fitness = train['fitness']
 
-    if (train_sharpe <= 0 or train_fitness <= 0):
+    if (train_sharpe < sharpe_limit / 2 or train_fitness < fitness_limit / 2):
         return 0
 
     else:
+        if (test_sharpe == 0):
+            return 0
+
         sign = abs(test_sharpe) / test_sharpe
         
         sharpe_stability = test_sharpe / train_sharpe
@@ -54,6 +57,8 @@ def sub_universe_robustness(simulation_result):
         is_sub_universe_sharpe = is_sub_universe_sharpe[0]
     
     is_sub_universe_sharpe_limit = [check['limit'] for check in checks if check['name'] == 'LOW_SUB_UNIVERSE_SHARPE'][0]
+
+    if (is_sub_universe_sharpe_limit == 0): return 0
 
     return round(0.75 * is_sub_universe_sharpe / is_sub_universe_sharpe_limit, 2)
 

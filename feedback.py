@@ -16,7 +16,7 @@ console = Console()
 gemini_api_keys = os.getenv('gemini_api_keys').split(',')
 output_file = strftime('%d%m%Y-%H%M%S')
 simulations_file = f"simulations/{output_file}.json"
-contexts_file = f"contexts/{output_file}.json"
+contexts_file = f"contexts/{output_file}.pkl"
 context = []
 
 brain_session = brain.login()
@@ -103,14 +103,6 @@ class User:
         train = simulation_result['train']
         checks = insample['checks']
 
-        train_sharpe = train['sharpe']
-        train_fitness = train['fitness']
-        train_turnover = round(100 * train['turnover'], 2)
-        sub_universe_robustness = processing.sub_universe_robustness(simulation_result)
-        alpha_quality_factor = round(processing.alpha_quality_factor(simulation_result), 2)
-        romad = round(insample['returns'] / insample['drawdown'], 2)
-        turnover_stability = round(processing.turnover_stability(simulation_result), 2)
-
         for check in checks:
             name = check['name']
 
@@ -124,6 +116,14 @@ class User:
                 turnover_upper_limit = check['limit']
             elif (name == 'CONCENTRATED_WEIGHT'):
                 weight_concentration = check
+
+        train_sharpe = train['sharpe']
+        train_fitness = train['fitness']
+        train_turnover = round(100 * train['turnover'], 2)
+        sub_universe_robustness = processing.sub_universe_robustness(simulation_result)
+        alpha_quality_factor = round(processing.alpha_quality_factor(simulation_result, sharpe_limit, fitness_limit), 2)
+        romad = round(insample['returns'] / insample['drawdown'], 2)
+        turnover_stability = round(processing.turnover_stability(simulation_result), 2)
 
         user_contexts = [
                         "Simulation Results",
@@ -153,6 +153,16 @@ class User:
         if (turnover_stability < 0.85):
             user_contexts[7] += f" is less than 0.85"
 
+        if (train_sharpe >= sharpe_limit and
+            train_fitness >= fitness_limit and
+            train['turnover'] >= turnover_lower_limit and
+            train['turnover'] <= turnover_upper_limit and
+            alpha_quality_factor >= 1 and
+            romad >= 2 and
+            turnover_stability >= 0.85):
+            if (sub_universe_robustness is not None and sub_universe_robustness >= 0.75):
+                console.print("ITERATIONS SUCCESSFUL.", color = 'green')
+                exit()
 
 #         user_context = f"""
 # Simulation Results:
@@ -172,8 +182,8 @@ class User:
                 user_context += f"\nWeight Concentration {round(weight_concentration['value'] * 100, 2)}% is above cutoff of {round(weight_concentration['limit'] * 100, 2)}%."
             else:
                 user_context += "\nWeight is too strongly concentrated or too few instruments are assigned weight."
-        
-        if (train_sharpe < -0.625 or train_fitness < -0.5):
+
+        if (train_sharpe < -1 * sharpe_limit / 2 or train_fitness < -1 * fitness_limit / 2):
             user_context += f"\nThe Hypothesis Direction is Reversed, Please Correct It."
 
         return user_context.strip()
@@ -263,7 +273,13 @@ for i in range(config.max_iterations):
     pnl_data = brain.Alpha.pnl(brain_session, alpha_id)
     processing.pnl_chart(pnl_data)
 
-    simulation_result = brain.Alpha.simulation_result(brain_session, alpha_id)
+    while True:
+        try:
+            simulation_result = brain.Alpha.simulation_result(brain_session, alpha_id)
+            break
+        except Exception as e:
+            console.print(f"brain.Alpha.simulation_result: {e}", style = 'red')
+            sleep(5)
 
     user_context = User.get_context(simulation_result)
 
