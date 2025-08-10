@@ -24,6 +24,9 @@ genai_client = genai.Client(
     api_key = gemini_api_keys[0]
 )
 
+os.makedirs("simulations", exist_ok = True)
+os.makedirs("contexts", exist_ok = True)
+
 with open(config.system_prompt_file, 'r') as f:
     system_prompt = f.read()
 
