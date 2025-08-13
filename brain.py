@@ -57,6 +57,10 @@ def login():
         t = headers["Set-Cookie"].split(";")[0][2:]
         set_key(".env", "t", t) 
 
+    brain_session.cookies.update({
+        "t": t
+    })
+
     data = response.json()
 
     user_id = data["user"]["id"]
@@ -135,7 +139,7 @@ class Alpha:
         return pnl_data
 
 
-def extract_alphas(brain_session, submitted = True):
+def extract_alphas(brain_session, submitted = True, conditions = {}, file_name = None):
     alphas = []
 
     payload = {
@@ -145,12 +149,15 @@ def extract_alphas(brain_session, submitted = True):
         'hidden': 'false'
     }
 
-    if (submitted):
-        payload['status!'] = 'UNSUBMITTED'
-        file_name = "submitted_alphas.json"
-    else:
-        payload['status'] = 'UNSUBMITTED'
-        file_name = "unsubmitted_alphas.json"
+    payload.update(conditions)
+
+    if (file_name == None):
+        if (submitted):
+            payload['status!'] = 'UNSUBMITTED'
+            file_name = "submitted_alphas.json"
+        else:
+            payload['status'] = 'UNSUBMITTED'
+            file_name = "unsubmitted_alphas.json"
 
     while (True):
         resp = brain_session.get(API.alphas, params = payload)
