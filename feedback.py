@@ -18,10 +18,11 @@ output_file = strftime('%d%m%Y-%H%M%S')
 simulations_file = f"simulations/{output_file}.json"
 contexts_file = f"contexts/{output_file}.pkl"
 context = []
+gemini_api_key_id = 0
 
 brain_session = brain.login()
 genai_client = genai.Client(
-    api_key = gemini_api_keys[0]
+    api_key = gemini_api_keys[gemini_api_key_id % len(gemini_api_keys)]
 )
 
 os.makedirs("simulations", exist_ok = True)
@@ -120,13 +121,16 @@ class User:
             elif (name == 'CONCENTRATED_WEIGHT'):
                 weight_concentration = check
 
-        train_sharpe = train['sharpe']
-        train_fitness = train['fitness']
-        train_turnover = round(100 * train['turnover'], 2)
-        sub_universe_robustness = processing.sub_universe_robustness(simulation_result)
-        alpha_quality_factor = round(processing.alpha_quality_factor(simulation_result, sharpe_limit, fitness_limit), 2)
-        romad = round(insample['returns'] / insample['drawdown'], 2)
-        turnover_stability = round(processing.turnover_stability(simulation_result), 2)
+        try:
+            train_sharpe = train['sharpe']
+            train_fitness = train['fitness']
+            train_turnover = round(100 * train['turnover'], 2)
+            sub_universe_robustness = processing.sub_universe_robustness(simulation_result)
+            alpha_quality_factor = round(processing.alpha_quality_factor(simulation_result, sharpe_limit, fitness_limit), 2)
+            romad = round(insample['returns'] / insample['drawdown'], 2)
+            turnover_stability = round(processing.turnover_stability(simulation_result), 2)
+        except TypeError:
+            return "Alpha Simulation Error. Please Change the Alpha Expression."
 
         user_contexts = [
                         "Simulation Results",
@@ -155,17 +159,6 @@ class User:
             user_contexts[6] += f" is less than 2"
         if (turnover_stability < 0.85):
             user_contexts[7] += f" is less than 0.85"
-
-        if (train_sharpe >= sharpe_limit and
-            train_fitness >= fitness_limit and
-            train['turnover'] >= turnover_lower_limit and
-            train['turnover'] <= turnover_upper_limit and
-            alpha_quality_factor >= 1 and
-            romad >= 2 and
-            turnover_stability >= 0.85):
-            if (sub_universe_robustness is not None and sub_universe_robustness >= 0.75):
-                console.print("ITERATIONS SUCCESSFUL.", color = 'green')
-                exit()
 
 #         user_context = f"""
 # Simulation Results:
@@ -249,7 +242,19 @@ for i in range(config.max_iterations):
             break
 
         except Exception as e:
-            console.print(f"Model.get_output: {e}", style = 'red')
+            error = e.args[0]
+
+            if ("RESOURCE_EXHAUSTED." in error):
+                console.print("Changing GEMINI API Key ID...", style = 'yellow')
+                gemini_api_key_id += 1
+
+                genai_client = genai.Client(
+                    api_key = gemini_api_keys[gemini_api_key_id % len(gemini_api_keys)]
+                )
+
+            else:
+                console.print(f"Model.get_output: {e}", style = 'red')
+
             sleep(5)
 
     model_context = Model.get_context(i, model_output)
