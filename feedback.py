@@ -103,86 +103,35 @@ class Model:
 
 class User:
     def get_context(simulation_result):
-        insample = simulation_result['is']
-        train = simulation_result['train']
-        checks = insample['checks']
 
-        for check in checks:
-            name = check['name']
+        kpis = processing.get_kpis(simulation_result)
+        user_context = []
 
-            if (name == 'LOW_SHARPE'):
-                sharpe_limit = check['limit']
-            elif (name == 'LOW_FITNESS'):
-                fitness_limit = check['limit']
-            elif (name == 'LOW_TURNOVER'):
-                turnover_lower_limit = check['limit']
-            elif (name == 'HIGH_TURNOVER'):
-                turnover_upper_limit = check['limit']
-            elif (name == 'CONCENTRATED_WEIGHT'):
-                weight_concentration = check
+        for kpi in kpis.keys():
+            metric = kpis[kpi]
 
-        try:
-            train_sharpe = train['sharpe']
-            train_fitness = train['fitness']
-            train_turnover = round(100 * train['turnover'], 2)
-            sub_universe_robustness = processing.sub_universe_robustness(simulation_result)
-            alpha_quality_factor = round(processing.alpha_quality_factor(simulation_result, sharpe_limit, fitness_limit), 2)
-            romad = round(insample['returns'] / insample['drawdown'], 2)
-            turnover_stability = round(processing.turnover_stability(simulation_result), 2)
-        except TypeError:
-            return "Alpha Simulation Error. Please Change the Alpha Expression."
+            if (kpi == "SUBMITTABLE"): pass
+            
+            if (kpi == "WARNINGS"):
+                user_context += metric                
+                break
+            
+            txt = f"{kpi}: {metric[0]}"
+            
+            if (len(metric) == 2):
+                if (metric[0] < metric[1]):
+                    txt += f" is less than {metric[1]}"
+                    
+            if (len(metric) == 3):
+                if (metric[0] < metric[1]):
+                    txt += f" is less than {metric[1]}"
+                    
+                if (metric[0] > metric[2]):
+                    txt += f" is more than {metric[2]}"
 
-        user_contexts = [
-                        "Simulation Results",
-                        f"Train Period Sharpe: {train_sharpe}",
-                        f"Train Period Fitness: {train_fitness}",
-                        f"Train Period Turnover: {train_turnover}%",
-                        f"Sub Universe Robustness: {sub_universe_robustness}",
-                        f"Alpha Quality Factor: {alpha_quality_factor}",
-                        f"RoMaD: {romad}",
-                        f"Turnover Stability: {turnover_stability}"
-                    ]
-
-        if (train_sharpe < sharpe_limit):
-            user_contexts[1] += f" is less than {sharpe_limit}"
-        if (train_fitness < fitness_limit):
-            user_contexts[2] += f" is less than {fitness_limit}"
-        if (train['turnover'] < turnover_lower_limit):
-            user_contexts[3] += f" is less than {round(100 * turnover_lower_limit, 2)}%"
-        if (train['turnover'] > turnover_upper_limit):
-            user_contexts[3] += f" is more than {round(100 * turnover_upper_limit, 2)}%"
-        if (sub_universe_robustness is not None and sub_universe_robustness < 0.75):
-            user_contexts[4] += f" is less than 0.75"
-        if (alpha_quality_factor < 1):
-            user_contexts[5] += f" is less than 1"
-        if (romad < 2):
-            user_contexts[6] += f" is less than 2"
-        if (turnover_stability < 0.85):
-            user_contexts[7] += f" is less than 0.85"
-
-#         user_context = f"""
-# Simulation Results:
-# Train Period Sharpe: {train['sharpe']}
-# Train Period Fitness: {train['fitness']}
-# Train Period Turnover: {round(100 * train['turnover'], 2)}%
-# Sub Universe Robustness: {processing.sub_universe_robustness(simulation_result)}
-# Alpha Quality Factor: {round(processing.alpha_quality_factor(simulation_result), 2)}
-# RoMaD: {round(insample['returns'] / insample['drawdown'], 2)}
-# Turnover Stability: {round(processing.turnover_stability(simulation_result), 2)}
-# """
-
-        user_context = '\n'.join(user_contexts)
-
-        if (weight_concentration['result'] == 'FAIL'):
-            if weight_concentration.get('value'):
-                user_context += f"\nWeight Concentration {round(weight_concentration['value'] * 100, 2)}% is above cutoff of {round(weight_concentration['limit'] * 100, 2)}%."
-            else:
-                user_context += "\nWeight is too strongly concentrated or too few instruments are assigned weight."
-
-        if (train_sharpe < -1 * sharpe_limit / 2 or train_fitness < -1 * fitness_limit / 2):
-            user_context += f"\nThe Hypothesis Direction is Reversed, Please Correct It."
-
-        return user_context.strip()
+            user_context.append(txt)
+            
+        return kpis["SUBMITTABLE"], "\n".join(user_context)
 
     def process_output(model_output):
 
@@ -244,7 +193,7 @@ for i in range(config.max_iterations):
         except Exception as e:
             error = e.args[0]
 
-            if ("RESOURCE_EXHAUSTED." in error):
+            if ("RESOURCE_EXHAUSTED." in error or "INTERNAL" in error):
                 console.print("Changing GEMINI API Key ID...", style = 'yellow')
                 gemini_api_key_id += 1
 
@@ -289,7 +238,7 @@ for i in range(config.max_iterations):
             console.print(f"brain.Alpha.simulation_result: {e}", style = 'red')
             sleep(5)
 
-    user_context = User.get_context(simulation_result)
+    is_submittable, user_context = User.get_context(simulation_result)
 
     context.append(
         types.Content(
@@ -311,3 +260,19 @@ for i in range(config.max_iterations):
         console.print(f"Model.count_tokens: {e}", style = 'red')
 
     print()
+
+    if (is_submittable):
+        success_text = r"""
+     _    _       _                               
+    / \  | |_ __ | |__   __ _                     
+   / _ \ | | '_ \| '_ \ / _` |                    
+  / ___ \| | |_) | | | | (_| |                    
+ /_/___\_\_| .__/|_| |_|\__,_|    _           _ _ 
+  / ___| __|_| __   ___ _ __ __ _| |_ ___  __| | |
+ | |  _ / _ \ '_ \ / _ \ '__/ _` | __/ _ \/ _` | |
+ | |_| |  __/ | | |  __/ | | (_| | ||  __/ (_| |_|
+  \____|\___|_| |_|\___|_|  \__,_|\__\___|\__,_(_)
+                                                  
+"""
+        console.print(success_text, style = 'green')
+        break

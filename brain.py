@@ -83,7 +83,11 @@ class Alpha:
             simulation_progress = brain_session.get(simulation_progress_url)
             trial += 1
 
-            simulation_response = simulation_progress.json()
+            try:
+                simulation_response = simulation_progress.json()
+
+            except requests.JSONDecodeError:
+                continue
 
             if ("alpha" in simulation_response):
                 break

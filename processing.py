@@ -5,7 +5,16 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 
 
-def alpha_quality_factor(simulation_result, sharpe_limit, fitness_limit):
+def get_check(checks, name):
+
+    for check in checks:
+        if (check['name'] == name):
+            return check
+    
+    return None
+
+
+def alpha_quality_factor(simulation_result, is_sharpe_limit, is_fitness_limit):
     train = simulation_result['train']
     test = simulation_result['test']
 
@@ -15,23 +24,25 @@ def alpha_quality_factor(simulation_result, sharpe_limit, fitness_limit):
     train_sharpe = train['sharpe']
     train_fitness = train['fitness']
 
-    if (train_sharpe < sharpe_limit / 2 or train_fitness < fitness_limit / 2):
+    if (train_sharpe < is_sharpe_limit / 2 or train_fitness < is_fitness_limit / 2):
         return 0
 
+    sharpe_stability = test_sharpe / train_sharpe
+    fitness_stability = test_fitness / train_fitness
+
+    if (test_sharpe == 0):
+        return 0
+
+    sign = abs(test_sharpe) / test_sharpe
+
+    if (sharpe_stability < 1 or fitness_stability < 1):
+        aqf = sign * (( min(1, sharpe_stability) * min(1, fitness_stability) ) ** (1 / 2))
+
     else:
-        if (test_sharpe == 0):
-            return 0
-
-        sign = abs(test_sharpe) / test_sharpe
+        aqf  = sign * ((sharpe_stability * fitness_stability) ** (1 / 2))
         
-        sharpe_stability = test_sharpe / train_sharpe
-        fitness_stability = test_fitness / train_fitness
-
-        if (sharpe_stability < 1 or fitness_stability < 1):
-            return round(sign * (min(1, sharpe_stability) * min(1, fitness_stability)) ** (1 / 2), 2)
-
-        return round(sign * ((sharpe_stability * fitness_stability) ** (1 / 2)), 2)
-            
+    return round(aqf, 2)
+        
 
 def turnover_stability(simulation_result):
     train = simulation_result['train']
@@ -42,25 +53,91 @@ def turnover_stability(simulation_result):
 
     turnover_stability = min(test_turnover, train_turnover) / max(test_turnover, train_turnover)
 
-    return turnover_stability
+    return round(turnover_stability, 2)
 
 
 def sub_universe_robustness(simulation_result):
     insample = simulation_result['is']
     checks = insample['checks']
 
-    is_sub_universe_sharpe = [check['value'] for check in checks if check['name'] == 'LOW_SUB_UNIVERSE_SHARPE']
+    low_sub_universe_sharpe = get_check(checks, "LOW_SUB_UNIVERSE_SHARPE")
 
-    if (is_sub_universe_sharpe == []):
+    if (low_sub_universe_sharpe is None):
         return None
     else:
-        is_sub_universe_sharpe = is_sub_universe_sharpe[0]
-    
-    is_sub_universe_sharpe_limit = [check['limit'] for check in checks if check['name'] == 'LOW_SUB_UNIVERSE_SHARPE'][0]
+        is_sub_universe_sharpe = low_sub_universe_sharpe['value']
+        is_sub_universe_sharpe_limit = low_sub_universe_sharpe['limit']
 
-    if (is_sub_universe_sharpe_limit == 0): return 0
+    if (is_sub_universe_sharpe_limit == 0):
+        return 0
 
     return round(0.75 * is_sub_universe_sharpe / is_sub_universe_sharpe_limit, 2)
+
+
+def get_kpis(simulation_result):
+    insample = simulation_result['is']
+    checks = insample['checks']
+    train = simulation_result['train']
+    warnings = []
+    submittable = True
+
+
+    train_sharpe = train['sharpe']
+    sharpe_lim = get_check(checks, "LOW_SHARPE")["limit"]
+    if (train_sharpe < sharpe_lim): submittable = False
+
+    train_fitness = train['fitness']
+    fitness_lim = get_check(checks, "LOW_FITNESS")["limit"]
+    if (train_fitness < fitness_lim): submittable = False
+
+    train_turnover = round(train['turnover'], 2)
+    turnover_lower_lim = get_check(checks, "LOW_TURNOVER")["limit"]
+    turnover_upper_lim = get_check(checks, "HIGH_TURNOVER")["limit"]
+    if (train_turnover < turnover_lower_lim or train_turnover > turnover_upper_lim): submittable = False
+
+    sur = sub_universe_robustness(simulation_result)
+    sur_lim = 0.75
+    if (sur < sur_lim): submittable = False
+
+    aqf = alpha_quality_factor(simulation_result, sharpe_lim, fitness_lim)
+    aqf_lim = 1
+    if (aqf < aqf_lim): submittable = False
+
+    romad = round(insample['returns'] / insample['drawdown'], 2)
+    romad_lim = 2
+    if (romad < romad_lim): submittable = False
+     
+    ts = turnover_stability(simulation_result)
+    ts_lim = 0.85 
+    if (ts < ts_lim): submittable = False
+
+    weight_concentration = get_check(checks, "CONCENTRATED_WEIGHT")
+    if (weight_concentration['result'] == 'FAIL'):
+        if weight_concentration.get('value'):
+            warnings.append(f"Weight Concentration {round(weight_concentration['value'] * 100, 2)}% is above cutoff of {round(weight_concentration['limit'] * 100, 2)}%.")
+        else:
+            warnings.append("Weight is too strongly concentrated or too few instruments are assigned weight.")
+        submittable = False
+
+    if (train['sharpe'] < -1 * sharpe_lim / 2 or train['fitness'] < -1 * fitness_lim / 2):
+        warnings.append("The Hypothesis Direction is Reversed, Please Correct It.")
+
+    if (not submittable):
+        warnings.append("The Alpha Expression is not Submittable.")
+
+    kpis = {
+        "Train Sharpe": [train_sharpe, sharpe_lim],
+        "Train Fitness": [train_fitness, fitness_lim],
+        "Train Turnover": [train_turnover, turnover_lower_lim, turnover_upper_lim],
+        "sub Universe Robustness": [sur, sur_lim],
+        "Alpha Quality Factor": [aqf, aqf_lim],
+        "RoMaD": [romad, romad_lim],
+        "Turnover Stability": [ts, ts_lim],
+        "WARNINGS": warnings,
+        "SUBMITTABLE": submittable
+    }
+
+    return kpis
 
 
 def pnl_chart(pnl_data):
