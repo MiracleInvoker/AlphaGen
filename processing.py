@@ -74,6 +74,13 @@ def sub_universe_robustness(simulation_result):
     return round(0.75 * is_sub_universe_sharpe / is_sub_universe_sharpe_limit, 2)
 
 
+def romad(simulation_result):
+    insample = simulation_result['is']
+
+    romad = round(insample['returns'] / insample['drawdown'], 2)
+
+    return romad
+
 def get_kpis(simulation_result):
     insample = simulation_result['is']
     checks = insample['checks']
@@ -97,7 +104,7 @@ def get_kpis(simulation_result):
 
     sur = sub_universe_robustness(simulation_result)
     sur_lim = 0.75
-    if (sur < sur_lim): submittable = False
+    if (sur is not None and sur < sur_lim): submittable = False
 
     aqf = alpha_quality_factor(simulation_result, sharpe_lim, fitness_lim)
     aqf_lim = 1
@@ -129,7 +136,7 @@ def get_kpis(simulation_result):
         "Train Sharpe": [train_sharpe, sharpe_lim],
         "Train Fitness": [train_fitness, fitness_lim],
         "Train Turnover": [train_turnover, turnover_lower_lim, turnover_upper_lim],
-        "sub Universe Robustness": [sur, sur_lim],
+        "Sub Universe Robustness": [sur, sur_lim],
         "Alpha Quality Factor": [aqf, aqf_lim],
         "RoMaD": [romad, romad_lim],
         "Turnover Stability": [ts, ts_lim],
@@ -137,31 +144,46 @@ def get_kpis(simulation_result):
         "SUBMITTABLE": submittable
     }
 
+    if (sur is None): kpis.pop("Sub Universe Robustness")
+
     return kpis
+
+
+def is_submittable(simulation_result):
+    insample = simulation_result['is']
+    checks = insample['checks']
+
+    for check in checks:
+        if (check['result'] == 'FAIL'):
+            return False
+        
+    return True
 
 
 def pnl_chart(pnl_data):
 
     def format_y(value, _):
         """Render large values with K/M suffix and preserve sign."""
-        sign = '-' if value < 0 else ''
-        abs_val = abs(value)
+        v = float(value)
+        sign = '-' if v < 0 else ''
+        abs_val = abs(v)
         if abs_val >= 1e7:
             val, suffix = abs_val / 1e6, 'M'
         elif abs_val >= 1e4:
             val, suffix = abs_val / 1e3, 'K'
         else:
-            return f"{value:,.0f}" if value.is_integer() else f"{value:,.1f}"
+            return f"{value:,.0f}" if v.is_integer() else f"{value:,.1f}"
         return f"{sign}{val:,.0f}{suffix}" if val.is_integer() else f"{sign}{val:,.1f}{suffix}"
 
-    date_strs, values = zip(*pnl_data)
-    dates = [datetime.strptime(d, '%Y-%m-%d') for d in date_strs]
+    num_series = len(pnl_data[0]) - 1
+    dates = [datetime.strptime(row[0], '%Y-%m-%d') for row in pnl_data]
+    series_values = [[row[i] for row in pnl_data] for i in range(1, num_series + 1)]
+
+    values = series_values[0]
     n_points = len(values)
 
-    _, steep_idx = min(
-        ((values[i+1] - values[i], i) for i in range(n_points - 1)), 
-        key=lambda item: item[0]
-    )
+    test_len = config.pnl_chart['test']
+    highlight_start = max(0, n_points - test_len)
 
     tick_candidates = []
     for _, group in groupby(dates, key=lambda d: d.year):
@@ -182,20 +204,21 @@ def pnl_chart(pnl_data):
 
     positions = [dates.index(dt) for dt, _ in filtered_labels]
     labels = [lbl for _, lbl in filtered_labels]
-    highlight_start = max(0, n_points - 252)
+
+    train_color = config.pnl_chart['train_color']
+    test_color = config.pnl_chart['test_color']
 
     fig, ax = plt.subplots(figsize=(10, 5), dpi=500, facecolor='white')
 
-    if highlight_start > 0:
-        ax.plot(range(highlight_start), values[:highlight_start],
-                linewidth=0.7, linestyle='-', color=config.pnl_chart['train_color'])
+    x = range(n_points)
 
-    ax.plot(range(highlight_start, n_points), values[highlight_start:],
-            linewidth=0.7, linestyle='-', color=config.pnl_chart['test_color'])
+    for svals in series_values:
+        if highlight_start > 0:
+            ax.plot(range(highlight_start), svals[:highlight_start],
+                    linewidth=0.7, linestyle='-', color=train_color, alpha=1.0)
+        ax.plot(range(highlight_start, n_points), svals[highlight_start:],
+                linewidth=0.7, linestyle='-', color=test_color, alpha=1.0)
 
-    x0, x1 = steep_idx, steep_idx + 1
-    y0, y1 = values[x0], values[x1]
-    ax.plot([x0, x1], [y0, y1], linewidth=0.7, linestyle='-', color=config.pnl_chart['drawdown_color'])
 
     ax.set_xticks(positions)
     ax.set_xticklabels(labels, rotation=0, ha='right', color='#7b8292', fontsize=8)
@@ -210,5 +233,5 @@ def pnl_chart(pnl_data):
     ax.set_xlim(left=0)
 
     plt.tight_layout()
-    plt.savefig('pnl_chart.png', dpi=500, bbox_inches='tight')
+    plt.savefig(config.pnl_chart['file_name'], dpi=500, bbox_inches='tight')
     plt.close(fig)

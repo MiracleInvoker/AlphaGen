@@ -20,6 +20,12 @@ class API:
     def pnl(alpha_id):
         return API.alpha + alpha_id + "/recordsets/pnl"
 
+    def yearly_stats(alpha_id):
+        return API.alpha + alpha_id + "/recordsets/yearly-stats"
+
+    def performance(alpha_id, challenge):
+        return API.base + "/competitions/" + challenge + "/alphas/" + alpha_id + "/before-and-after-performance"
+
 
 console = Console()
 
@@ -107,6 +113,29 @@ class Alpha:
 
         return alpha_id
     
+    def yearly_stats(brain_session, alpha_id):
+
+        trial = 0
+        while True:
+            yearly_stats = brain_session.get(API.yearly_stats(alpha_id))
+            trial += 1
+
+            if (yearly_stats.text):
+                break
+
+            terminal.clear_line()
+            console.print(f"Attempt #{trial} | Retrieving Yearly Stats...", end = '', style = 'yellow')
+
+            sleep(float(yearly_stats.headers["Retry-After"]))
+
+        terminal.clear_line()
+        console.print(f"Attempt #{trial} | Yearly Stats Retrieved.", style = 'yellow')
+
+        yearly_stats_json = yearly_stats.json()
+        yearly_stats_data = yearly_stats_json["records"]
+        return yearly_stats_data
+        
+
     def simulation_result(brain_session, alpha_id):
         
         while True:
@@ -141,6 +170,21 @@ class Alpha:
         pnl_json = pnl.json()
         pnl_data = pnl_json["records"]
         return pnl_data
+
+    def performance(brain_session, alpha_id, challenge):
+
+        while True:
+            performance_result = brain_session.get(API.performance(alpha_id, challenge))
+
+            if performance_result.text:
+                break
+
+            sleep(float(performance_result.headers["Retry-After"]))
+
+        performance_json = performance_result.json()
+        score = performance_json['score']['after'] - performance_json['score']['before']
+
+        return score
 
 
 def extract_alphas(brain_session, submitted = True, conditions = {}, file_name = None):

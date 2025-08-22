@@ -7,8 +7,10 @@ import json
 import os
 import pickle
 import processing
+from random import randint
 from rich.console import Console
 from time import sleep, strftime
+from utils import terminal
 
 
 load_dotenv()
@@ -17,12 +19,12 @@ gemini_api_keys = os.getenv('gemini_api_keys').split(',')
 output_file = strftime('%d%m%Y-%H%M%S')
 simulations_file = f"simulations/{output_file}.json"
 contexts_file = f"contexts/{output_file}.pkl"
+gemini_api_key_id = randint(0, len(gemini_api_keys) - 1)
 context = []
-gemini_api_key_id = 0
 
 brain_session = brain.login()
 genai_client = genai.Client(
-    api_key = gemini_api_keys[gemini_api_key_id % len(gemini_api_keys)]
+    api_key = gemini_api_keys[gemini_api_key_id]
 )
 
 os.makedirs("simulations", exist_ok = True)
@@ -79,14 +81,31 @@ class Model:
         return resp.total_tokens
 
     def get_output(context):
-        response = genai_client.models.generate_content(
-            model = config.model,
-            contents = context,
-            config = model_config
-        )
 
-        resp = response.text
-        return json.loads(resp)
+        trial = 0
+
+        while True:
+
+            trial += 1
+
+            terminal.clear_line()
+            console.print(f"Attempt #{trial} | Retrieving Model Output...", end = '', style = 'yellow')
+
+            response = genai_client.models.generate_content(
+                model = config.model,
+                contents = context,
+                config = model_config
+            )
+
+            if (response.parsed):
+                break
+
+            sleep(5)
+
+        terminal.clear_line()
+        console.print(f"Attempt #{trial} | Model Output Retrieved.", style = 'yellow')
+
+        return response.parsed
 
     def get_context(i, model_output):
 
@@ -177,6 +196,7 @@ context.append(
 console.print(f"Model: {config.model}", style = 'purple')
 console.print(f"Temperature: {config.temperature}", style = 'purple')
 console.print(f"System Prompt File: {config.system_prompt_file}", style = 'purple')
+console.print(f"Gemini API Key ID: [{gemini_api_key_id}]", style = 'purple')
 
 
 console.print(initial_prompt, style = 'green')
@@ -192,17 +212,20 @@ for i in range(config.max_iterations):
 
         except Exception as e:
             error = e.args[0]
+            print()
 
-            if ("RESOURCE_EXHAUSTED." in error or "INTERNAL" in error):
-                console.print("Changing GEMINI API Key ID...", style = 'yellow')
-                gemini_api_key_id += 1
+            if ("RESOURCE_EXHAUSTED" in error):
 
-                genai_client = genai.Client(
-                    api_key = gemini_api_keys[gemini_api_key_id % len(gemini_api_keys)]
-                )
+                gemini_api_keys.pop(gemini_api_key_id)
+                console.print(f"Gemini API Key ID [{gemini_api_key_id}] | 429 RESOURCE_EXHAUSTED", style = 'red')
 
-            else:
-                console.print(f"Model.get_output: {e}", style = 'red')
+            gemini_api_key_id = randint(0, len(gemini_api_keys) - 1)
+
+            console.print(f"Changing GEMINI API Key ID... [{gemini_api_key_id}]", style = 'yellow')
+
+            genai_client = genai.Client(
+                api_key = gemini_api_keys[gemini_api_key_id]
+            )
 
             sleep(5)
 
