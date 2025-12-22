@@ -1,163 +1,217 @@
-import config
 from datetime import datetime
 from itertools import groupby
+
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
+
+import config
+
+
+def fix_func_param(code, func_name, param_key):
+    token = f"{func_name}("
+    start = code.find(token)
+
+    if start == -1:
+        return code
+
+    balance = 0
+    comma_idx = -1
+    i = start + len(token)
+
+    while i < len(code):
+        char = code[i]
+        if char == "(":
+            balance += 1
+        elif char == ")":
+            if balance == 0:
+                break
+            balance -= 1
+        elif char == "," and balance == 0:
+            comma_idx = i
+        i += 1
+
+    end = i
+
+    prefix = code[:start]
+    suffix = code[end + 1 :]
+
+    if comma_idx != -1:
+        arg1 = code[start + len(token) : comma_idx]
+        arg2 = code[comma_idx + 1 : end]
+
+        if not arg2.replace(" ", "").startswith(param_key):
+            arg2 = " " + param_key + arg2.strip()
+
+        fixed_arg1 = fix_func_param(arg1, func_name, param_key)
+        fixed_suffix = fix_func_param(suffix, func_name, param_key)
+
+        return f"{prefix}{func_name}({fixed_arg1},{arg2}){fixed_suffix}"
+    else:
+        content = code[start + len(token) : end]
+
+        fixed_content = fix_func_param(content, func_name, param_key)
+        fixed_suffix = fix_func_param(suffix, func_name, param_key)
+
+        return f"{prefix}{func_name}({fixed_content}){fixed_suffix}"
+
+
+def fix_fastexpr(alpha_expression):
+    alpha_expression = (
+        alpha_expression.replace("\n", "").replace("; ", ";").replace(";", ";\n")
+    )
+
+    alpha_expression = fix_func_param(alpha_expression, "winsorize", "std=")
+    alpha_expression = fix_func_param(alpha_expression, "hump", "hump=")
+
+    alpha_expression = alpha_expression.strip()
+
+    return alpha_expression
 
 
 def get_check(checks, name):
 
     for check in checks:
-        if (check['name'] == name):
+        if check["name"] == name:
             return check
-    
+
     return None
 
 
-def alpha_quality_factor(simulation_result, is_sharpe_limit, is_fitness_limit):
-    train = simulation_result['train']
-    test = simulation_result['test']
-
-    test_sharpe = test['sharpe']
-    test_fitness = test['fitness']
-
-    train_sharpe = train['sharpe']
-    train_fitness = train['fitness']
-
-    if (train_sharpe < is_sharpe_limit / 2 or train_fitness < is_fitness_limit / 2):
-        return 0
-
-    sharpe_stability = test_sharpe / train_sharpe
-    fitness_stability = test_fitness / train_fitness
-
-    if (test_sharpe == 0):
-        return 0
-
-    sign = abs(test_sharpe) / test_sharpe
-
-    if (sharpe_stability < 1 or fitness_stability < 1):
-        aqf = sign * (( min(1, sharpe_stability) * min(1, fitness_stability) ) ** (1 / 2))
-
-    else:
-        aqf  = sign * ((sharpe_stability * fitness_stability) ** (1 / 2))
-        
-    return round(aqf, 2)
-        
-
-def turnover_stability(simulation_result):
-    train = simulation_result['train']
-    test = simulation_result['test']
-
-    test_turnover = test['turnover']
-    train_turnover = train['turnover']
-
-    turnover_stability = min(test_turnover, train_turnover) / max(test_turnover, train_turnover)
-
-    return round(turnover_stability, 2)
-
-
 def sub_universe_robustness(simulation_result):
-    insample = simulation_result['is']
-    checks = insample['checks']
+    insample = simulation_result["is"]
+    checks = insample["checks"]
 
     low_sub_universe_sharpe = get_check(checks, "LOW_SUB_UNIVERSE_SHARPE")
 
-    if (low_sub_universe_sharpe is None):
+    if low_sub_universe_sharpe is None:
         return None
-    else:
-        is_sub_universe_sharpe = low_sub_universe_sharpe['value']
-        is_sub_universe_sharpe_limit = low_sub_universe_sharpe['limit']
 
-    if (is_sub_universe_sharpe_limit == 0):
+    else:
+        is_sub_universe_sharpe = low_sub_universe_sharpe["value"]
+        is_sub_universe_sharpe_limit = low_sub_universe_sharpe["limit"]
+
+    if is_sub_universe_sharpe_limit == 0:
         return 0
 
     return round(0.75 * is_sub_universe_sharpe / is_sub_universe_sharpe_limit, 2)
 
 
-def romad(simulation_result):
-    insample = simulation_result['is']
+def check_submission(simulation_result):
+    insample = simulation_result["is"]
+    checks = insample["checks"]
 
-    romad = round(insample['returns'] / insample['drawdown'], 2)
-
-    return romad
-
-def get_kpis(simulation_result):
-    insample = simulation_result['is']
-    checks = insample['checks']
-    train = simulation_result['train']
-    warnings = []
-    submittable = True
-
-
-    train_sharpe = train['sharpe']
-    sharpe_lim = get_check(checks, "LOW_SHARPE")["limit"]
-    if (train_sharpe < sharpe_lim): submittable = False
-
-    train_fitness = train['fitness']
-    fitness_lim = get_check(checks, "LOW_FITNESS")["limit"]
-    if (train_fitness < fitness_lim): submittable = False
-
-    train_turnover = round(train['turnover'], 2)
-    turnover_lower_lim = get_check(checks, "LOW_TURNOVER")["limit"]
-    turnover_upper_lim = get_check(checks, "HIGH_TURNOVER")["limit"]
-    if (train_turnover < turnover_lower_lim or train_turnover > turnover_upper_lim): submittable = False
-
-    sur = sub_universe_robustness(simulation_result)
-    sur_lim = 0.75
-    if (sur is not None and sur < sur_lim): submittable = False
-
-    aqf = alpha_quality_factor(simulation_result, sharpe_lim, fitness_lim)
-    aqf_lim = 1
-    if (aqf < aqf_lim): submittable = False
-
-    romad = round(insample['returns'] / insample['drawdown'], 2)
-    romad_lim = 2
-    if (romad < romad_lim): submittable = False
-     
-    ts = turnover_stability(simulation_result)
-    ts_lim = 0.85 
-    if (ts < ts_lim): submittable = False
-
-    weight_concentration = get_check(checks, "CONCENTRATED_WEIGHT")
-    if (weight_concentration['result'] == 'FAIL'):
-        if weight_concentration.get('value'):
-            warnings.append(f"Weight Concentration {round(weight_concentration['value'] * 100, 2)}% is above cutoff of {round(weight_concentration['limit'] * 100, 2)}%.")
-        else:
-            warnings.append("Weight is too strongly concentrated or too few instruments are assigned weight.")
-        submittable = False
-
-    if (train['sharpe'] < -1 * sharpe_lim / 2 or train['fitness'] < -1 * fitness_lim / 2):
-        warnings.append("The Hypothesis Direction is Reversed, Please Correct It.")
-
-    if (not submittable):
-        warnings.append("The Alpha Expression is not Submittable.")
-
-    kpis = {
-        "Train Sharpe": [train_sharpe, sharpe_lim],
-        "Train Fitness": [train_fitness, fitness_lim],
-        "Train Turnover": [train_turnover, turnover_lower_lim, turnover_upper_lim],
-        "Sub Universe Robustness": [sur, sur_lim],
-        "Alpha Quality Factor": [aqf, aqf_lim],
-        "RoMaD": [romad, romad_lim],
-        "Turnover Stability": [ts, ts_lim],
-        "WARNINGS": warnings,
-        "SUBMITTABLE": submittable
-    }
-
-    if (sur is None): kpis.pop("Sub Universe Robustness")
-
-    return kpis
-
-
-def is_submittable(simulation_result):
-    insample = simulation_result['is']
-    checks = insample['checks']
+    to_check = [
+        "LOW_SHARPE",
+        "LOW_FITNESS",
+        "LOW_TURNOVER",
+        "HIGH_TURNOVER",
+        "CONCENTRATED_WEIGHT",
+        "LOW_SUB_UNIVERSE_SHARPE",
+        "IS_LADDER_SHARPE",
+        "LOW_2Y_SHARPE",
+    ]
 
     for check in checks:
-        if (check['result'] == 'FAIL'):
+        if check["name"] in to_check and check["result"] != "PASS":
             return False
-        
+
     return True
+
+
+def get_metrics(simulation_result):
+    insample = simulation_result["is"]
+    checks = insample["checks"]
+
+    warnings = []
+
+    sharpe = insample["sharpe"]
+    sharpe_lb = get_check(checks, "LOW_SHARPE")["limit"]
+
+    ladder_sharpe_check = get_check(checks, "IS_LADDER_SHARPE")
+
+    if ladder_sharpe_check is None:
+        ladder_sharpe_check = get_check(checks, "LOW_2Y_SHARPE")
+
+    ladder_sharpe = ladder_sharpe_check["value"]
+    ladder_sharpe_lb = ladder_sharpe_check["limit"]
+
+    fitness = insample["fitness"]
+    fitness_lb = get_check(checks, "LOW_FITNESS")["limit"]
+
+    turnover = insample["turnover"]
+    turnover_lb = get_check(checks, "LOW_TURNOVER")["limit"]
+    turnover_ub = get_check(checks, "HIGH_TURNOVER")["limit"]
+
+    sur = sub_universe_robustness(simulation_result)
+    sur_lb = 0.75
+
+    weight_concentration = get_check(checks, "CONCENTRATED_WEIGHT")
+    if weight_concentration["result"] == "FAIL":
+        if weight_concentration.get("value"):
+            warnings.append(
+                f"Weight Concentration {round(weight_concentration['value'] * 100, 2)}% is above cutoff of {round(weight_concentration['limit'] * 100, 2)}%."
+            )
+        else:
+            warnings.append(
+                "Weight is too strongly concentrated or too few instruments are assigned weight."
+            )
+    else:
+        warnings.append("Weight is well distributed over instruments.")
+
+    if sharpe <= -1 * sharpe_lb / 2 and fitness <= -1 * fitness_lb / 2:
+        warnings.append(
+            "Hypothesis Direction is Reversed, please multiply by a negative sign."
+        )
+
+    metrics = {
+        "Sharpe": [sharpe, sharpe_lb],
+        "Fitness": [fitness, fitness_lb],
+        "Turnover": [turnover, turnover_lb, turnover_ub],
+        "Sub Universe Robustness": [sur, sur_lb],
+        "Ladder Sharpe": [ladder_sharpe, ladder_sharpe_lb],
+        "WARNINGS": warnings,
+    }
+
+    if sur is None:
+        metrics.pop("Sub Universe Robustness")
+
+    return metrics
+
+
+def get_user_context(simulation_result):
+    metrics = get_metrics(simulation_result)
+    is_submittable = check_submission(simulation_result)
+
+    user_context = []
+
+    for metric in metrics.keys():
+        value = metrics[metric]
+
+        if metric == "WARNINGS":
+            user_context += value
+            break
+
+        txt = f"{metric}: {value[0]}"
+
+        if len(value) == 2:
+            if value[0] < value[1]:
+                txt += f" is less than {value[1]}"
+
+        if len(value) == 3:
+            if value[0] < value[1]:
+                txt += f" is less than {value[1]}"
+
+            if value[0] > value[2]:
+                txt += f" is more than {value[2]}"
+
+        user_context.append(txt)
+
+    if is_submittable:
+        user_context.append("Alpha Expression is Submittable.")
+    else:
+        user_context.append("Alpha Expression is NOT Submittable.")
+
+    return is_submittable, "\n".join(user_context)
 
 
 def pnl_chart(pnl_data):
@@ -165,24 +219,28 @@ def pnl_chart(pnl_data):
     def format_y(value, _):
         """Render large values with K/M suffix and preserve sign."""
         v = float(value)
-        sign = '-' if v < 0 else ''
+        sign = "-" if v < 0 else ""
         abs_val = abs(v)
         if abs_val >= 1e7:
-            val, suffix = abs_val / 1e6, 'M'
+            val, suffix = abs_val / 1e6, "M"
         elif abs_val >= 1e4:
-            val, suffix = abs_val / 1e3, 'K'
+            val, suffix = abs_val / 1e3, "K"
         else:
-            return f"{value:,.0f}" if v.is_integer() else f"{value:,.1f}"
-        return f"{sign}{val:,.0f}{suffix}" if val.is_integer() else f"{sign}{val:,.1f}{suffix}"
+            return f"{v:,.0f}" if v.is_integer() else f"{v:,.1f}"
+        return (
+            f"{sign}{val:,.0f}{suffix}"
+            if val.is_integer()
+            else f"{sign}{val:,.1f}{suffix}"
+        )
 
     num_series = len(pnl_data[0]) - 1
-    dates = [datetime.strptime(row[0], '%Y-%m-%d') for row in pnl_data]
-    series_values = [[row[i] for row in pnl_data] for i in range(1, num_series + 1)]
 
-    values = series_values[0]
-    n_points = len(values)
+    cols = [list(col) for col in zip(*pnl_data)]
+    dates = [datetime.strptime(d, "%Y-%m-%d") for d in cols[0]]
+    series_values = [list(col) for col in cols[1 : num_series + 1]]
 
-    test_len = config.pnl_chart['test']
+    n_points = len(series_values[0])
+    test_len = config.pnl_chart["test"]
     highlight_start = max(0, n_points - test_len)
 
     tick_candidates = []
@@ -202,36 +260,56 @@ def pnl_chart(pnl_data):
             filtered_labels.append((dt, label))
             prev_label = label
 
-    positions = [dates.index(dt) for dt, _ in filtered_labels]
+    idx_by_date = {dt: i for i, dt in enumerate(dates)}
+    positions = [idx_by_date[dt] for dt, _ in filtered_labels]
     labels = [lbl for _, lbl in filtered_labels]
 
-    train_color = config.pnl_chart['train_color']
-    test_color = config.pnl_chart['test_color']
+    train_color = config.pnl_chart["train_color"]
+    test_color = config.pnl_chart["test_color"]
 
-    fig, ax = plt.subplots(figsize=(10, 5), dpi=500, facecolor='white')
+    fig, ax = plt.subplots(figsize=(10, 5), dpi=500, facecolor="white")
+    x_full = range(n_points)
+    x_train = range(highlight_start)
 
-    x = range(n_points)
+    lw = 0.7
+    ls = "-"
 
-    for svals in series_values:
-        if highlight_start > 0:
-            ax.plot(range(highlight_start), svals[:highlight_start],
-                    linewidth=0.7, linestyle='-', color=train_color, alpha=1.0)
-        ax.plot(range(highlight_start, n_points), svals[highlight_start:],
-                linewidth=0.7, linestyle='-', color=test_color, alpha=1.0)
-
+    for idx, svals in enumerate(series_values):
+        # First series: split styling (test full, train overlay) — keep existing behavior
+        if idx == 0:
+            ax.plot(
+                x_full, svals, linewidth=lw, linestyle=ls, color=test_color, alpha=1.0
+            )
+            if highlight_start > 0:
+                ax.plot(
+                    x_train,
+                    svals[:highlight_start],
+                    linewidth=lw,
+                    linestyle=ls,
+                    color=train_color,
+                    alpha=1.0,
+                )
+        # Second series: use secondary_color for the full graph (no train/test split)
+        elif idx == 1:
+            col = config.pnl_chart["secondary_color"]
+            ax.plot(x_full, svals, linewidth=lw, linestyle=ls, color=col, alpha=1.0)
+        # Third series (if present): use tertiary_color for the full graph
+        elif idx == 2:
+            col = config.pnl_chart["tertiary_color"]
+            ax.plot(x_full, svals, linewidth=lw, linestyle=ls, color=col, alpha=1.0)
 
     ax.set_xticks(positions)
-    ax.set_xticklabels(labels, rotation=0, ha='right', color='#7b8292', fontsize=8)
+    ax.set_xticklabels(labels, rotation=0, ha="right", color="#7b8292", fontsize=8)
     ax.yaxis.set_major_formatter(FuncFormatter(format_y))
-    ax.grid(axis='y', color='#e6e6e6', linewidth=0.5)
+    ax.grid(axis="y", color="#e6e6e6", linewidth=0.5)
 
-    for spine in ['top', 'left', 'right']:
+    for spine in ["top", "left", "right"]:
         ax.spines[spine].set_visible(False)
-    ax.spines['bottom'].set_color('#ccd6eb')
+    ax.spines["bottom"].set_color("#ccd6eb")
 
-    ax.tick_params(axis='y', colors='#7b8292', labelsize=8)
+    ax.tick_params(axis="y", colors="#7b8292", labelsize=8)
     ax.set_xlim(left=0)
 
     plt.tight_layout()
-    plt.savefig(config.pnl_chart['file_name'], dpi=500, bbox_inches='tight')
+    plt.savefig(config.pnl_chart["file_name"], dpi=500, bbox_inches="tight")
     plt.close(fig)

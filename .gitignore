@@ -1,6 +1,7 @@
 .env
-__pycache__
-simulations
-contexts
-prompts
+operators.txt
 pnl_chart.png
+__pycache__/
+contexts/
+simulations/
+system_prompts/
