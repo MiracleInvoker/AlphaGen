@@ -1,58 +1,51 @@
+import os
+import pickle
 from datetime import datetime
 from itertools import groupby
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
+from rich.console import Console
 
-import config
+import ace_lib as ace
+
+console = Console()
 
 
-def fix_func_param(code, func_name, param_key):
-    token = f"{func_name}("
-    start = code.find(token)
+def get_stored_session():
+    brain_session = ace.SingleSession()
 
-    if start == -1:
-        return code
+    if os.path.exists("session.pkl"):
+        try:
+            with open("session.pkl", "rb") as f:
+                session_data = pickle.load(f)
 
-    balance = 0
-    comma_idx = -1
-    i = start + len(token)
+                brain_session.cookies.update(session_data["cookies"])
+                brain_session.headers.update(session_data["headers"])
 
-    while i < len(code):
-        char = code[i]
-        if char == "(":
-            balance += 1
-        elif char == ")":
-            if balance == 0:
-                break
-            balance -= 1
-        elif char == "," and balance == 0:
-            comma_idx = i
-        i += 1
+            console.print("Loaded stored session from disk.", style="yellow")
 
-    end = i
+        except Exception as e:
+            console.print(f"Failed to load session: {e}", style="red")
 
-    prefix = code[:start]
-    suffix = code[end + 1 :]
+    time_to_live = ace.check_session_timeout(brain_session)
 
-    if comma_idx != -1:
-        arg1 = code[start + len(token) : comma_idx]
-        arg2 = code[comma_idx + 1 : end]
+    if time_to_live > 2000:
+        console.print(
+            f"Session is valid. Expires in {time_to_live} seconds.", style="yellow"
+        )
+        return brain_session
 
-        if not arg2.replace(" ", "").startswith(param_key):
-            arg2 = " " + param_key + arg2.strip()
+    console.print("Session expired or missing. Logging in...", style="yellow")
+    brain_session = ace.start_session()
 
-        fixed_arg1 = fix_func_param(arg1, func_name, param_key)
-        fixed_suffix = fix_func_param(suffix, func_name, param_key)
+    with open("session.pkl", "wb") as f:
+        pickle.dump(
+            {"cookies": brain_session.cookies, "headers": brain_session.headers}, f
+        )
+    console.print("New session saved to disk.", style="yellow")
 
-        return f"{prefix}{func_name}({fixed_arg1},{arg2}){fixed_suffix}"
-    else:
-        content = code[start + len(token) : end]
-
-        fixed_content = fix_func_param(content, func_name, param_key)
-        fixed_suffix = fix_func_param(suffix, func_name, param_key)
-
-        return f"{prefix}{func_name}({fixed_content}){fixed_suffix}"
+    return brain_session
 
 
 def fix_fastexpr(alpha_expression):
@@ -60,11 +53,7 @@ def fix_fastexpr(alpha_expression):
         alpha_expression.replace("\n", "").replace("; ", ";").replace(";", ";\n")
     )
 
-    alpha_expression = fix_func_param(alpha_expression, "winsorize", "std=")
-    alpha_expression = fix_func_param(alpha_expression, "hump", "hump=")
-
     alpha_expression = alpha_expression.strip()
-
     return alpha_expression
 
 
@@ -90,7 +79,7 @@ def sub_universe_robustness(simulation_result):
         is_sub_universe_sharpe = low_sub_universe_sharpe["value"]
         is_sub_universe_sharpe_limit = low_sub_universe_sharpe["limit"]
 
-    if is_sub_universe_sharpe_limit == 0:
+    if is_sub_universe_sharpe_limit <= 0 or is_sub_universe_sharpe <= 0:
         return 0
 
     return round(0.75 * is_sub_universe_sharpe / is_sub_universe_sharpe_limit, 2)
@@ -158,11 +147,6 @@ def get_metrics(simulation_result):
     else:
         warnings.append("Weight is well distributed over instruments.")
 
-    if sharpe <= -1 * sharpe_lb / 2 and fitness <= -1 * fitness_lb / 2:
-        warnings.append(
-            "Hypothesis Direction is Reversed, please multiply by a negative sign."
-        )
-
     metrics = {
         "Sharpe": [sharpe, sharpe_lb],
         "Fitness": [fitness, fitness_lb],
@@ -214,7 +198,7 @@ def get_user_context(simulation_result):
     return is_submittable, "\n".join(user_context)
 
 
-def pnl_chart(pnl_data):
+def pnl_chart(pnl_config, pnl_df):
 
     def format_y(value, _):
         """Render large values with K/M suffix and preserve sign."""
@@ -233,14 +217,13 @@ def pnl_chart(pnl_data):
             else f"{sign}{val:,.1f}{suffix}"
         )
 
-    num_series = len(pnl_data[0]) - 1
+    plot_df = pnl_df.select_dtypes(include=["number"])
+    dates = plot_df.index.to_pydatetime().tolist()
 
-    cols = [list(col) for col in zip(*pnl_data)]
-    dates = [datetime.strptime(d, "%Y-%m-%d") for d in cols[0]]
-    series_values = [list(col) for col in cols[1 : num_series + 1]]
+    series_values = [plot_df[col].values.tolist() for col in plot_df.columns]
 
-    n_points = len(series_values[0])
-    test_len = config.pnl_chart["test"]
+    n_points = len(dates)
+    test_len = pnl_config["test"]
     highlight_start = max(0, n_points - test_len)
 
     tick_candidates = []
@@ -264,8 +247,8 @@ def pnl_chart(pnl_data):
     positions = [idx_by_date[dt] for dt, _ in filtered_labels]
     labels = [lbl for _, lbl in filtered_labels]
 
-    train_color = config.pnl_chart["train_color"]
-    test_color = config.pnl_chart["test_color"]
+    train_color = pnl_config.get("train_color", "#808080")
+    test_color = pnl_config.get("test_color", "#0000FF")
 
     fig, ax = plt.subplots(figsize=(10, 5), dpi=500, facecolor="white")
     x_full = range(n_points)
@@ -275,7 +258,6 @@ def pnl_chart(pnl_data):
     ls = "-"
 
     for idx, svals in enumerate(series_values):
-        # First series: split styling (test full, train overlay) — keep existing behavior
         if idx == 0:
             ax.plot(
                 x_full, svals, linewidth=lw, linestyle=ls, color=test_color, alpha=1.0
@@ -289,13 +271,13 @@ def pnl_chart(pnl_data):
                     color=train_color,
                     alpha=1.0,
                 )
-        # Second series: use secondary_color for the full graph (no train/test split)
+
         elif idx == 1:
-            col = config.pnl_chart["secondary_color"]
+            col = pnl_config.get("secondary_color", "#FF0000")
             ax.plot(x_full, svals, linewidth=lw, linestyle=ls, color=col, alpha=1.0)
-        # Third series (if present): use tertiary_color for the full graph
+
         elif idx == 2:
-            col = config.pnl_chart["tertiary_color"]
+            col = pnl_config.get("tertiary_color", "#00FF00")
             ax.plot(x_full, svals, linewidth=lw, linestyle=ls, color=col, alpha=1.0)
 
     ax.set_xticks(positions)
@@ -310,6 +292,8 @@ def pnl_chart(pnl_data):
     ax.tick_params(axis="y", colors="#7b8292", labelsize=8)
     ax.set_xlim(left=0)
 
+    file_name = pnl_config["file_name"]
+
     plt.tight_layout()
-    plt.savefig(config.pnl_chart["file_name"], dpi=500, bbox_inches="tight")
+    plt.savefig(file_name, dpi=500, bbox_inches="tight")
     plt.close(fig)

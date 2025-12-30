@@ -1,0 +1,14 @@
+{
+  "None": "NONE",
+  "RAM": "REVERSION_AND_MOMENTUM",
+  "Statistical": "STATISTICAL",
+  "Crowding Factors": "CROWDING",
+  "Fast Factors": "FAST",
+  "Slow Factors": "SLOW",
+  "Market": "MARKET",
+  "Sector": "SECTOR",
+  "Industry": "INDUSTRY",
+  "Subindustry": "SUBINDUSTRY",
+  "Country / Region": "COUNTRY",
+  "Slow + Fast Factors": "SLOW_AND_FAST"
+}
