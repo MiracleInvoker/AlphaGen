@@ -1,6 +1,6 @@
 import os
 import pickle
-from datetime import datetime
+import re
 from itertools import groupby
 
 import matplotlib.pyplot as plt
@@ -55,6 +55,25 @@ def fix_fastexpr(alpha_expression):
 
     alpha_expression = alpha_expression.strip()
     return alpha_expression
+
+
+def reverse_fastexpr(alpha_expression):
+
+    statements = [s.strip() for s in alpha_expression.split(";") if s.strip()]
+    last_statement = statements[-1]
+
+    if "=" in last_statement:
+        parts = last_statement.split("=", 1)
+        var_name = parts[0].strip()
+        expr_body = parts[1].strip()
+
+        negated_last = f"{var_name} = -1 * ({expr_body})"
+
+    else:
+        negated_last = f"-1 * ({last_statement})"
+
+    statements[-1] = negated_last
+    return ";\n".join(statements) + ";"
 
 
 def get_check(checks, name):
