@@ -55,7 +55,7 @@ if "Group" in config["operators"]:
         universe=alpha["settings"]["universe"],
         data_type="GROUP",
     )
-    groups_df = groups_df.sort_values(by="alphaCount", ascending=False).head(10)
+    groups_df = groups_df.sort_values(by="alphaCount", ascending=False).head(6)
     initial_prompt += "\n"
     initial_prompt += "\n".join(f"{x} (GROUP)" for x in groups_df["id"])
 
@@ -149,7 +149,7 @@ for i in range(config["iterations"]):
             break
 
         except Exception as e:
-            console.print(f"get_model_output: {e}", style="red")
+            console.print(f"\nget_model_output: {e}", style="red")
 
             gemini_api_key_id = (gemini_api_key_id + 1) % len(gemini_api_keys)
             console.print(

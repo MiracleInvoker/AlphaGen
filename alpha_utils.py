@@ -1,11 +1,12 @@
 import os
 import pickle
-import re
 from itertools import groupby
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
+from requests.adapters import HTTPAdapter
 from rich.console import Console
+from urllib3.util.retry import Retry
 
 import ace_lib as ace
 
@@ -14,6 +15,21 @@ console = Console()
 
 def get_stored_session():
     brain_session = ace.SingleSession()
+
+    retry_strategy = Retry(
+        total=5,  # Retry up to 5 times
+        backoff_factor=1,  # Wait 1s, 2s, 4s... between retries
+        status_forcelist=[429, 500, 502, 503, 504],  # Retry on these errors
+        allowed_methods=[
+            "HEAD",
+            "GET",
+            "OPTIONS",
+            "POST",
+        ],  # Apply to GET (used by check_session_timeout)
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    brain_session.mount("https://", adapter)
+    brain_session.mount("http://", adapter)
 
     if os.path.exists("session.pkl"):
         try:
