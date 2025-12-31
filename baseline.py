@@ -64,7 +64,7 @@ context.append(
 )
 
 
-operators_str = "**Operators**\n\n"
+operators_str = "**Operators Context**\n\n"
 
 for operator_category in config["operators"]:
     if operator_category[0] == "!":

@@ -92,5 +92,21 @@
       "SUBINDUSTRY",
       "SLOW_AND_FAST"
     ]
+  },
+  "IND": {
+    "Universe": ["TOP500"],
+    "Delay": [1],
+    "Neutralization": [
+      "NONE",
+      "REVERSION_AND_MOMENTUM",
+      "CROWDING",
+      "FAST",
+      "SLOW",
+      "MARKET",
+      "SECTOR",
+      "INDUSTRY",
+      "SUBINDUSTRY",
+      "SLOW_AND_FAST"
+    ]
   }
 }

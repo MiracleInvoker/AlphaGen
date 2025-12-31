@@ -1,11 +1,11 @@
 # Configurations
 .env
+session.pkl
 alpha.json
 config.json
 
 
 # Project Files
-session.pkl
 pnl_chart.png
 simulations/
 system_prompts/
